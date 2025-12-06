@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 
@@ -18,7 +17,8 @@ class CreateReminderScreen extends StatefulWidget {
 class _CreateReminderScreenState extends State<CreateReminderScreen> {
   final _titleController = TextEditingController();
   DateTime? _selectedTime;
-  Position? _currentPosition;
+  double? _selectedLat;
+  double? _selectedLng;
 
   String _triggerType = "Location"; // default
   String? _selectedPlace;
@@ -44,23 +44,21 @@ class _CreateReminderScreenState extends State<CreateReminderScreen> {
     }
 
     final box = Hive.box<Reminder>('reminders');
-        final reminder = Reminder(
-  title: _titleController.text.trim(),
-  locationName: _triggerType == "Location" && _selectedPlace != null 
-      ? _selectedPlace! 
-      : null, // NOW SAFE because model accepts String?
-  lat: _currentPosition?.latitude,
-  lng: _currentPosition?.longitude,
-  triggerType: _triggerType,
-  scheduledTime: _triggerType == "Time" ? _selectedTime : null,
-  created: DateTime.now(),
-  active: true,
-);
+    final reminder = Reminder(
+      title: _titleController.text.trim(),
+      locationName: _triggerType == "Location" ? _selectedPlace : null,
+      lat: _selectedLat,
+      lng: _selectedLng,
+      triggerType: _triggerType,
+      scheduledTime: _triggerType == "Time" ? _selectedTime : null,
+      created: DateTime.now(),
+      active: true,
+    );
     final key = await box.add(reminder);
     await reminder.save();
 
     // TIME REMINDER → LOUD ALARM
-    if (_triggerType == "Time" && _selectedTime != null) {
+    if (_triggerType == "Time") {
       await NotificationService.scheduleExactAlarm(
         id: key,
         title: reminder.title,
@@ -234,18 +232,8 @@ class _CreateReminderScreenState extends State<CreateReminderScreen> {
                           onChanged: (val) {
                             setState(() {
                               _selectedPlace = val;
-                              _currentPosition = Position(
-                                latitude: loc.lat,
-                                longitude: loc.lng,
-                                timestamp: DateTime.now(),
-                                accuracy: 0,
-                                altitude: 0,
-                                heading: 0,
-                                speed: 0,
-                                speedAccuracy: 0,
-                                altitudeAccuracy: 0,
-                                headingAccuracy: 0,
-                              );
+                              _selectedLat = loc.lat;
+                              _selectedLng = loc.lng;
                             });
                           },
                           selected: isSelected,

@@ -3,6 +3,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../models/reminder.dart';
 import 'notification_service.dart';
+import '../services/context_service.dart';
+
 
 class GeofenceService {
   static const double _radius = 120; // meters
@@ -40,21 +42,22 @@ class GeofenceService {
 
       // Only trigger if close AND reminder still active
       if (distance <= _radius && reminder.active) {
-        final int reminderId = reminder.key is int
-            ? reminder.key as int
-            : int.parse(reminder.key.toString());
+        // NEW: Check context before firing notification
+        if (ContextService.shouldDeliverReminderNow()) {
+          final int reminderId = reminder.key is int
+              ? reminder.key as int
+              : int.parse(reminder.key.toString());
 
-        
+          await NotificationService.showLoudAlarm(
+            id: reminderId,
+            title: "YOU HAVE ARRIVED!",
+            body: reminder.title,
+          );
 
-        await NotificationService.showLoudAlarm(
-  id: reminderId,
-  title: "YOU HAVE ARRIVED!",
-  body: reminder.title,
-);
-
-        // Mark as delivered (only once)
-        reminder.active = false;
-        await reminder.save();
+          // Mark as delivered (only once)
+          reminder.active = false;
+          await reminder.save();
+        }
       }
     });
   }
