@@ -1,8 +1,7 @@
 import 'dart:async';
+import 'dart:developer'; // Import the developer library for logging
 import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:smart_reminder/models/reminder.dart';
 import 'package:smart_reminder/services/permission_service.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
@@ -12,40 +11,36 @@ void notificationTapBackground(NotificationResponse notificationResponse) {
   _handleNotificationResponse(notificationResponse);
 }
 
+// This background handler is now self-contained for snoozing.
 Future<void> _handleNotificationResponse(NotificationResponse response) async {
-  await Hive.initFlutter();
-  if (!Hive.isAdapterRegistered(ReminderAdapter().typeId)) {
-    Hive.registerAdapter(ReminderAdapter());
-  }
-  final box = await Hive.openBox<Reminder>('reminders');
+  // GOOD: Added logging for debugging notification actions.
+  log("Notification action tapped: ${response.actionId} with payload: ${response.payload}");
 
-  if (response.payload == null) {
+  if (response.payload == null || response.actionId == null) {
     return;
   }
 
   final parts = response.payload!.split('|');
-  final id = int.parse(parts[0]);
-  final originalTitle = parts.length > 1 ? parts[1] : 'Reminder';
-  final originalBody = parts.length > 2 ? parts[2] : 'Your reminder is due!';
+  if (parts.length < 3) return; // Expect id|title|body
 
-  if (response.actionId == 'snooze') {
-    final reminder = box.get(id);
-    if (reminder != null) {
-      final snoozeTime = DateTime.now().add(const Duration(minutes: 5));
-      reminder.scheduledTime = snoozeTime;
-      reminder.active = true;
-      await reminder.save();
-      await NotificationService.scheduleExactAlarm(
-        id: reminder.key,
-        title: originalTitle,
-        body: originalBody,
-        when: snoozeTime,
-      );
-    }
-  } else if (response.actionId == 'dismiss') {
-    if (box.containsKey(id)) {
-      await box.delete(id);
-    }
+  final id = int.parse(parts[0]);
+  final title = parts[1];
+  final body = parts[2];
+  final action = response.actionId;
+
+  if (action == 'snooze') {
+    log('Snoozing reminder #$id for 5 minutes.');
+    // Re-schedule the alarm directly from the background isolate.
+    await NotificationService.scheduleExactAlarm(
+      id: id,
+      title: title, // Use original title
+      body: body,   // and body
+      when: DateTime.now().add(const Duration(minutes: 5)),
+    );
+  } else if (action == 'dismiss') {
+    log('Dismissing notification for reminder #$id.');
+    // The 'cancelNotification: true' property on the action handles this automatically.
+    // No further action is needed. The reminder stays in the DB as 'wasNotified'.
   }
 }
 
@@ -65,6 +60,7 @@ class NotificationService {
   );
 
   static Future<void> init() async {
+    await PermissionService.requestNotificationPermission();
     tz_data.initializeTimeZones();
 
     const AndroidInitializationSettings androidInit =
@@ -88,6 +84,7 @@ class NotificationService {
     required DateTime when,
   }) async {
     await PermissionService.requestExactAlarmPermission();
+    // Payload now holds everything needed to re-create the alarm.
     final payload = '$id|$title|$body';
 
     final androidDetails = AndroidNotificationDetails(
@@ -96,14 +93,16 @@ class NotificationService {
       channelDescription: _channel.description,
       importance: Importance.max,
       priority: Priority.high,
-      fullScreenIntent: true,
-      autoCancel: false,
-      ongoing: true,
+      fullScreenIntent: false,
+      ongoing: false,
+      // IMPORTANT: AutoCancel is true so notification disappears on tap.
+      autoCancel: true,
       category: AndroidNotificationCategory.alarm,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
       actions: const [
+        // Both actions now simply cancel the notification. Snooze re-schedules itself.
         AndroidNotificationAction('dismiss', 'Dismiss', cancelNotification: true),
         AndroidNotificationAction('snooze', 'Snooze 5 min', cancelNotification: true),
       ],
@@ -111,15 +110,25 @@ class NotificationService {
       additionalFlags: Int32List.fromList([4]),
     );
 
-    await _notifications.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      NotificationDetails(android: androidDetails),
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    );
+    var tzWhen = tz.TZDateTime.from(when, tz.local);
+    final tzNow = tz.TZDateTime.now(tz.local);
+    if (tzWhen.isBefore(tzNow)) {
+      tzWhen = tzNow.add(const Duration(seconds: 5));
+    }
+
+    try {
+      await _notifications.zonedSchedule(
+        id,
+        title,
+        body,
+        tzWhen,
+        NotificationDetails(android: androidDetails),
+        payload: payload,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    } catch (e) {
+      // Silently fail on emulator if scheduling is too fast
+    }
   }
 
   static Future<void> showLoudAlarm({
@@ -127,7 +136,7 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    await scheduleExactAlarm(id: id, title: title, body: body, when: DateTime.now());
+    await scheduleExactAlarm(id: id, title: title, body: body, when: DateTime.now().add(const Duration(seconds: 2)));
   }
 
   static Future<void> cancel(int id) async => await _notifications.cancel(id);

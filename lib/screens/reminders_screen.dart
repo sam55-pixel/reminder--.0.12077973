@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/reminder.dart';
+import '../services/ui_message_service.dart'; // Import the message service
 
 class RemindersScreen extends StatefulWidget {
   const RemindersScreen({super.key});
@@ -13,9 +14,37 @@ class _RemindersScreenState extends State<RemindersScreen> {
   final TextEditingController _searchController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Listen for messages from background services
+    UiMessageService.userMessage.addListener(_showUserMessage);
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
+    // Stop listening to avoid memory leaks
+    UiMessageService.userMessage.removeListener(_showUserMessage);
     super.dispose();
+  }
+
+  // Method to display a SnackBar
+  void _showUserMessage() {
+    // Check if the widget is still mounted and a message exists.
+    if (!mounted || UiMessageService.userMessage.value == null) return;
+
+    // Capture the context and messenger beforehand.
+    final messenger = ScaffoldMessenger.of(context);
+    final message = UiMessageService.userMessage.value!;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.blue.shade800,
+      ),
+    );
+    // Clear the message so it doesn't show again
+    UiMessageService.clearMessage();
   }
 
   @override
@@ -81,11 +110,16 @@ class _RemindersScreenState extends State<RemindersScreen> {
                       color: Colors.white, size: 40),
                 ),
                 onDismissed: (_) async {
+                  // GOOD: Get ScaffoldMessenger before the await.
                   final messenger = ScaffoldMessenger.of(context);
+                  final title = r.title; // Save title before deleting
                   await box.delete(r.key);
+
+                  // GOOD: Use the captured messenger, and check if mounted.
+                  if (!mounted) return;
                   messenger.showSnackBar(
                     SnackBar(
-                      content: Text('"${r.title}" deleted'),
+                      content: Text('"$title" deleted'),
                       backgroundColor: Colors.red.shade600,
                     ),
                   );
@@ -159,20 +193,25 @@ class _RemindersScreenState extends State<RemindersScreen> {
                         ),
                       ],
                     ),
-                    trailing: r.active
-                        ? Chip(
-                            backgroundColor: Colors.green.shade100,
-                            label: Text(
-                              r.triggerType == "Time" ? "TIME" : "LOCATION",
-                              style: TextStyle(
-                                color: r.triggerType == "Time"
-                                    ? Colors.blue.shade700
-                                    : Colors.green.shade700,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                    trailing: r.wasNotified
+                        ? const Chip(
+                            backgroundColor: Colors.grey,
+                            label: Text("Notified"),
                           )
-                        : const Icon(Icons.notifications_off, color: Colors.grey),
+                        : (r.active
+                            ? Chip(
+                                backgroundColor: Colors.green.shade100,
+                                label: Text(
+                                  r.triggerType == "Time" ? "TIME" : "LOCATION",
+                                  style: TextStyle(
+                                    color: r.triggerType == "Time"
+                                        ? Colors.blue.shade700
+                                        : Colors.green.shade700,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              )
+                            : const Icon(Icons.notifications_off, color: Colors.grey)),
                   ),
                 ),
               );

@@ -37,6 +37,9 @@ class Reminder extends HiveObject {
   @HiveField(10)
   List<String> permanentlyBlockedIn;
 
+  @HiveField(11)
+  bool wasNotified;
+
   Reminder({
     required this.title,
     this.locationName,                    // ← NOW OPTIONAL
@@ -49,6 +52,7 @@ class Reminder extends HiveObject {
     this.triggerMode = "ARRIVE",
     Map<String, int>? ignoredContexts,
     List<String>? permanentlyBlockedIn,
+    this.wasNotified = false,
   })  : ignoredContexts = ignoredContexts ?? <String, int>{},
         permanentlyBlockedIn = permanentlyBlockedIn ?? <String>[];
 
