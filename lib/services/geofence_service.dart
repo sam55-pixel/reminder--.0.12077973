@@ -7,7 +7,7 @@ import '../services/context_service.dart';
 
 
 class GeofenceService {
-  static const double _radius = 120; // meters
+  static const double _radius = 120; // in meters
 
   static Future<void> registerAll() async {
     final box = Hive.box<Reminder>('reminders');
