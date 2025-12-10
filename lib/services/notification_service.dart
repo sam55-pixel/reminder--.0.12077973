@@ -1,46 +1,80 @@
 import 'dart:async';
-import 'dart:developer'; // Import the developer library for logging
+import 'dart:developer';
 import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:smart_reminder/services/context_service.dart';
 import 'package:smart_reminder/services/permission_service.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse notificationResponse) {
-  _handleNotificationResponse(notificationResponse);
-}
+void notificationTapBackground(NotificationResponse notificationResponse) async {
+  log("Notification tapped. Applying context-aware auto-snooze/dismiss logic.");
 
-// This background handler is now self-contained for snoozing.
-Future<void> _handleNotificationResponse(NotificationResponse response) async {
-  // GOOD: Added logging for debugging notification actions.
-  log("Notification action tapped: ${response.actionId} with payload: ${response.payload}");
+  final notifications = FlutterLocalNotificationsPlugin();
+  tz_data.initializeTimeZones();
 
-  if (response.payload == null || response.actionId == null) {
+  if (notificationResponse.payload == null) {
+    log("Error: Payload is null.");
     return;
   }
 
-  final parts = response.payload!.split('|');
-  if (parts.length < 3) return; // Expect id|title|body
-
+  final parts = notificationResponse.payload!.split('|');
+  if (parts.length < 3) {
+      log("Error: Invalid payload format.");
+      return;
+  }
   final id = int.parse(parts[0]);
   final title = parts[1];
   final body = parts[2];
-  final action = response.actionId;
 
-  if (action == 'snooze') {
-    log('Snoozing reminder #$id for 5 minutes.');
-    // Re-schedule the alarm directly from the background isolate.
-    await NotificationService.scheduleExactAlarm(
-      id: id,
-      title: title, // Use original title
-      body: body,   // and body
-      when: DateTime.now().add(const Duration(minutes: 5)),
+  // Always cancel the original notification that was tapped.
+  await notifications.cancel(id);
+  log("Canceled original notification #$id.");
+
+  // Get current user activity.
+  final activity = ContextService.getCurrentActivity();
+  log("Current activity: $activity");
+
+  // If user is moving, auto-snooze. Otherwise, dismiss.
+  if (activity == 'STILL') {
+    log("ACTION: User is still. Dismissing reminder #$id.");
+    // No further action needed, the notification is already cancelled.
+  } else {
+    log("ACTION: User is moving ($activity). Snoozing reminder #$id for 5 minutes.");
+    
+    final androidDetails = AndroidNotificationDetails(
+      'stoic_alarm_channel',
+      'Stoic Oracle Alarms',
+      channelDescription: 'Critical reminders that bypass Do Not Disturb',
+      importance: Importance.max,
+      priority: Priority.high,
+      fullScreenIntent: false,
+      ongoing: false,
+      autoCancel: true,
+      category: AndroidNotificationCategory.alarm,
+      playSound: true,
+      enableVibration: true,
+      vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
+      sound: const RawResourceAndroidNotificationSound('alarm'),
+      additionalFlags: Int32List.fromList([4]),
+      // Buttons are removed.
     );
-  } else if (action == 'dismiss') {
-    log('Dismissing notification for reminder #$id.');
-    // The 'cancelNotification: true' property on the action handles this automatically.
-    // No further action is needed. The reminder stays in the DB as 'wasNotified'.
+
+    try {
+      await notifications.zonedSchedule(
+        id,
+        title,
+        body,
+        tz.TZDateTime.now(tz.local).add(const Duration(minutes: 5)),
+        NotificationDetails(android: androidDetails),
+        payload: notificationResponse.payload,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+      log("SUCCESS: Rescheduled snoozed reminder #$id");
+    } catch (e, s) {
+      log("Error rescheduling notification: $e", stackTrace: s);
+    }
   }
 }
 
@@ -48,7 +82,7 @@ class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
-  static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
+  static final AndroidNotificationChannel _channel = AndroidNotificationChannel(
     'stoic_alarm_channel',
     'Stoic Oracle Alarms',
     description: 'Critical reminders that bypass Do Not Disturb',
@@ -56,11 +90,10 @@ class NotificationService {
     playSound: true,
     enableVibration: true,
     showBadge: true,
-    sound: RawResourceAndroidNotificationSound('alarm'),
+    sound: const RawResourceAndroidNotificationSound('alarm'),
   );
 
   static Future<void> init() async {
-    await PermissionService.requestNotificationPermission();
     tz_data.initializeTimeZones();
 
     const AndroidInitializationSettings androidInit =
@@ -68,7 +101,8 @@ class NotificationService {
 
     await _notifications.initialize(
       const InitializationSettings(android: androidInit),
-      onDidReceiveNotificationResponse: _handleNotificationResponse,
+      // Use the new context-aware handler for both foreground and background taps
+      onDidReceiveNotificationResponse: notificationTapBackground,
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
     );
 
@@ -84,7 +118,6 @@ class NotificationService {
     required DateTime when,
   }) async {
     await PermissionService.requestExactAlarmPermission();
-    // Payload now holds everything needed to re-create the alarm.
     final payload = '$id|$title|$body';
 
     final androidDetails = AndroidNotificationDetails(
@@ -95,17 +128,12 @@ class NotificationService {
       priority: Priority.high,
       fullScreenIntent: false,
       ongoing: false,
-      // IMPORTANT: AutoCancel is true so notification disappears on tap.
       autoCancel: true,
       category: AndroidNotificationCategory.alarm,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      actions: const [
-        // Both actions now simply cancel the notification. Snooze re-schedules itself.
-        AndroidNotificationAction('dismiss', 'Dismiss', cancelNotification: true),
-        AndroidNotificationAction('snooze', 'Snooze 5 min', cancelNotification: true),
-      ],
+      // Buttons are removed.
       sound: const RawResourceAndroidNotificationSound('alarm'),
       additionalFlags: Int32List.fromList([4]),
     );
@@ -127,7 +155,7 @@ class NotificationService {
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
     } catch (e) {
-      // Silently fail on emulator if scheduling is too fast
+      log("Error scheduling via NotificationService: $e");
     }
   }
 
@@ -136,7 +164,9 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    await scheduleExactAlarm(id: id, title: title, body: body, when: DateTime.now().add(const Duration(seconds: 2)));
+    if (ContextService.shouldDeliverReminderNow()) {
+      await scheduleExactAlarm(id: id, title: title, body: body, when: DateTime.now().add(const Duration(seconds: 2)));
+    }
   }
 
   static Future<void> cancel(int id) async => await _notifications.cancel(id);
