@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
 import 'package:smart_reminder/models/reminder.dart';
 import 'package:smart_reminder/services/notification_service.dart';
 
@@ -10,9 +9,7 @@ class ContextService {
   static String currentLocationText = "Getting location...";
   static Timer? _timer;
 
-  // This runs in background (call from main.dart)
   static void startListening() {
-    // 1. Listen for location changes to determine activity
     Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -38,8 +35,8 @@ class ContextService {
       await box.put('location', currentLocationText);
     });
 
-    // 2. Check for time-based reminders every minute
-    _timer?.cancel(); // Cancel any existing timer
+    _timer?.cancel();
+    // The timer now only checks for time-based reminders.
     _timer = Timer.periodic(const Duration(seconds: 20), (timer) {
       _checkTimeBasedReminders();
     });
@@ -50,13 +47,14 @@ class ContextService {
     final box = Hive.box<Reminder>('reminders');
 
     for (final reminder in box.values) {
+      // Check if reminder is due and hasn't been notified yet.
       if (reminder.active &&
+          !reminder.wasNotified &&
           reminder.scheduledTime != null &&
           now.isAfter(reminder.scheduledTime!)) {
+        // Check if the user is in a state to receive the notification.
         if (shouldDeliverReminderNow()) {
-          final int reminderId = reminder.key is int
-              ? reminder.key as int
-              : int.parse(reminder.key.toString());
+          final int reminderId = reminder.key as int;
 
           NotificationService.showLoudAlarm(
             id: reminderId,
@@ -64,8 +62,9 @@ class ContextService {
             body: reminder.title,
           );
 
-          // Deactivate reminder so it doesn't fire again
-          reminder.active = false;
+          // Mark as notified to prevent re-triggering.
+          // The user can manually delete it from the app list later.
+          reminder.wasNotified = true;
           reminder.save();
         }
       }
@@ -73,6 +72,7 @@ class ContextService {
   }
 
   static bool shouldDeliverReminderNow() {
+    // A user is considered available if they are not moving too fast.
     return currentActivity == "STILL" || currentActivity == "WALKING";
   }
 

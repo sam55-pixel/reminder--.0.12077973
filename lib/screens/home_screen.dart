@@ -5,14 +5,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
-import '../models/reminder.dart';
 import 'reminders_screen.dart';
 import 'create_reminder_screen.dart';
 import 'insights_screen.dart';
 import '../screens/settings_screen.dart';
-import 'map_context_screen.dart'; 
+import 'map_context_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,32 +24,18 @@ class _HomeScreenState extends State<HomeScreen> {
   String _locationText = "Fetching location...";
   String _activity = "Detecting activity...";
 
-  final TextEditingController _searchController = TextEditingController();
-  List<Reminder> _reminders = [];
-  List<Reminder> _filtered = [];
   StreamSubscription<AccelerometerEvent>? _accelSub;
 
   @override
   void initState() {
     super.initState();
-    _loadReminders();
     _startLocationAndActivityDetection();
-    _searchController.addListener(_filterReminders);
   }
 
   @override
   void dispose() {
     _accelSub?.cancel();
-    _searchController.dispose();
     super.dispose();
-  }
-
-  void _loadReminders() {
-    final box = Hive.box<Reminder>('reminders');
-    setState(() {
-      _reminders = box.values.toList();
-      _filtered = List.from(_reminders);
-    });
   }
 
   void _startLocationAndActivityDetection() {
@@ -65,7 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _locationText = "Lat: ${position.latitude.toStringAsFixed(4)}, "
-                        "Lng: ${position.longitude.toStringAsFixed(4)}";
+            "Lng: ${position.longitude.toStringAsFixed(4)}";
       });
     });
 
@@ -88,17 +72,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _filterReminders() {
-  final query = _searchController.text.toLowerCase().trim();
-  
-  setState(() {
-    _filtered = _reminders.where((r) =>
-        r.title.toLowerCase().contains(query) ||
-        (r.locationName?.toLowerCase().contains(query) ?? false)
-    ).toList();
-  });
-}
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -106,10 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _selectedIndex,
         children: [
           // 1. Reminders
-          RemindersScreen(
-            reminders: _filtered,
-            searchController: _searchController,
-          ),
+          const RemindersScreen(),
 
           // 2. Live Context (NOW WORKS!)
           MapContextScreen(
@@ -124,20 +94,17 @@ class _HomeScreenState extends State<HomeScreen> {
           const SettingsScreen(),
         ],
       ),
-
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.deepPurple,
         elevation: 10,
-        onPressed: () async {
-          final result = await Navigator.push(
+        onPressed: () {
+          Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const CreateReminderScreen()),
           );
-          if (result == true || mounted) _loadReminders();
         },
         child: const Icon(Icons.add, size: 32, color: Colors.white),
       ),
-
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) => setState(() => _selectedIndex = i),

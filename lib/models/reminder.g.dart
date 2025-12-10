@@ -28,13 +28,14 @@ class ReminderAdapter extends TypeAdapter<Reminder> {
       triggerMode: fields[8] as String,
       ignoredContexts: (fields[9] as Map?)?.cast<String, int>(),
       permanentlyBlockedIn: (fields[10] as List?)?.cast<String>(),
+      wasNotified: fields[11] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, Reminder obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.title)
       ..writeByte(1)
@@ -56,7 +57,9 @@ class ReminderAdapter extends TypeAdapter<Reminder> {
       ..writeByte(9)
       ..write(obj.ignoredContexts)
       ..writeByte(10)
-      ..write(obj.permanentlyBlockedIn);
+      ..write(obj.permanentlyBlockedIn)
+      ..writeByte(11)
+      ..write(obj.wasNotified);
   }
 
   @override
