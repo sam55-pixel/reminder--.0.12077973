@@ -128,11 +128,16 @@ class ReminderCard extends StatelessWidget {
             ],
           ),
           trailing: Switch(
-            value: reminder.active,
-            onChanged: (_) => onToggle(),
-            activeThumbColor: Colors.deepPurple,
-          ),
-          onTap: onDismiss,
+  value: reminder.active,
+  onChanged: (_) => onToggle(),
+  thumbColor: WidgetStateProperty.resolveWith<Color>((states) {
+    if (states.contains(WidgetState.selected)) {
+      return Colors.deepPurple; 
+    }
+    return Colors.grey; 
+  }),
+),
+onTap: onDismiss,
         ),
       ),
     );
