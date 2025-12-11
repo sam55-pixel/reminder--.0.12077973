@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:developer';
 import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:smart_reminder/models/reminder.dart';
 import 'package:smart_reminder/services/context_service.dart';
 import 'package:smart_reminder/services/permission_service.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
@@ -9,89 +11,78 @@ import 'package:timezone/timezone.dart' as tz;
 
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse notificationResponse) async {
-  log("Notification tapped. Applying context-aware auto-snooze/dismiss logic.");
+  log("Notification action received: ${notificationResponse.actionId}");
 
-  final notifications = FlutterLocalNotificationsPlugin();
-  tz_data.initializeTimeZones();
-
-  if (notificationResponse.payload == null) {
-    log("Error: Payload is null.");
-    return;
+  await Hive.initFlutter();
+  if (!Hive.isAdapterRegistered(ReminderAdapter().typeId)) {
+    Hive.registerAdapter(ReminderAdapter());
   }
 
-  final parts = notificationResponse.payload!.split('|');
-  if (parts.length < 3) {
-      log("Error: Invalid payload format.");
-      return;
-  }
-  final id = int.parse(parts[0]);
-  final title = parts[1];
-  final body = parts[2];
+  if (notificationResponse.payload == null) return;
 
-  // Always cancel the original notification that was tapped.
-  await notifications.cancel(id);
-  log("Canceled original notification #$id.");
+  final id = int.tryParse(notificationResponse.payload!);
+  if (id == null) return;
 
-  // Get current user activity.
-  final activity = ContextService.getCurrentActivity();
-  log("Current activity: $activity");
+  // Always cancel the notification to remove the sticky alarm
+  await NotificationService.cancel(id);
 
-  // If user is moving, auto-snooze. Otherwise, dismiss.
-  if (activity == 'STILL') {
-    log("ACTION: User is still. Dismissing reminder #$id.");
-    // No further action needed, the notification is already cancelled.
-  } else {
-    log("ACTION: User is moving ($activity). Snoozing reminder #$id for 5 minutes.");
-    
-    final androidDetails = AndroidNotificationDetails(
-      'stoic_alarm_channel',
-      'Stoic Oracle Alarms',
-      channelDescription: 'Critical reminders that bypass Do Not Disturb',
-      importance: Importance.max,
-      priority: Priority.high,
-      fullScreenIntent: false,
-      ongoing: false,
-      autoCancel: true,
-      category: AndroidNotificationCategory.alarm,
-      playSound: true,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      sound: const RawResourceAndroidNotificationSound('alarm'),
-      additionalFlags: Int32List.fromList([4]),
-      // Buttons are removed.
-    );
+  final box = await Hive.openBox<Reminder>('reminders');
+  final reminder = box.get(id);
 
-    try {
-      await notifications.zonedSchedule(
-        id,
-        title,
-        body,
-        tz.TZDateTime.now(tz.local).add(const Duration(minutes: 5)),
-        NotificationDetails(android: androidDetails),
-        payload: notificationResponse.payload,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      );
-      log("SUCCESS: Rescheduled snoozed reminder #$id");
-    } catch (e, s) {
-      log("Error rescheduling notification: $e", stackTrace: s);
+  if (reminder != null) {
+    switch (notificationResponse.actionId) {
+      case 'dismiss':
+        final currentContext = await ContextService.getCurrentActivity();
+        reminder.ignored(currentContext);
+        log('Reminder #${reminder.key} ignored in context: $currentContext');
+        break;
+      case 'snooze_10':
+        log('Snoozing reminder #${reminder.key} for 10 minutes.');
+        await NotificationService.scheduleExactAlarm(
+          id: id,
+          title: reminder.title,
+          body: "Snoozed for 10 minutes", // General snooze message
+          when: DateTime.now().add(const Duration(minutes: 10)),
+        );
+        // Reminder stays active
+        break;
+      default: // Default tap action
+        reminder.wasNotified = true;
+        reminder.active = false;
+        break;
     }
+    await reminder.save();
   }
+  await box.close();
 }
+
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
   static final AndroidNotificationChannel _channel = AndroidNotificationChannel(
-    'stoic_alarm_channel',
-    'Stoic Oracle Alarms',
-    description: 'Critical reminders that bypass Do Not Disturb',
+    'smart_reminder_channel',
+    'Smart Reminders',
+    description: 'Channel for important reminder notifications.',
     importance: Importance.max,
     playSound: true,
     enableVibration: true,
     showBadge: true,
-    sound: const RawResourceAndroidNotificationSound('alarm'),
   );
+
+  // New channel for location-based alarms
+  static final AndroidNotificationChannel _locationAlarmChannel = AndroidNotificationChannel(
+    'location_alarm_channel',
+    'Location Alarms',
+    description: 'Channel for high-priority location-based alarms.',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+    showBadge: true,
+    sound: RawResourceAndroidNotificationSound('loud_alarm'), // Use a custom raw sound
+  );
+
 
   static Future<void> init() async {
     tz_data.initializeTimeZones();
@@ -101,7 +92,6 @@ class NotificationService {
 
     await _notifications.initialize(
       const InitializationSettings(android: androidInit),
-      // Use the new context-aware handler for both foreground and background taps
       onDidReceiveNotificationResponse: notificationTapBackground,
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
     );
@@ -109,6 +99,48 @@ class NotificationService {
     final androidPlugin = _notifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(_channel);
+    await androidPlugin?.createNotificationChannel(_locationAlarmChannel); // Create the new channel
+  }
+
+  // New method for showing a persistent, full-screen location alarm
+  static Future<void> showLocationReminder({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    final payload = id.toString();
+
+    final androidDetails = AndroidNotificationDetails(
+      _locationAlarmChannel.id,
+      _locationAlarmChannel.name,
+      channelDescription: _locationAlarmChannel.description,
+      importance: Importance.max,
+      priority: Priority.high,
+      fullScreenIntent: true, // This is key for full-screen alerts
+      ongoing: true, // Makes the notification persistent
+      autoCancel: false, // User must interact with it
+      sound: _locationAlarmChannel.sound,
+      playSound: true,
+      enableVibration: true,
+      vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction('snooze_10', 'Snooze 10m'),
+        const AndroidNotificationAction('dismiss', 'Dismiss'),
+      ],
+    );
+
+    try {
+      await _notifications.show(
+        id,
+        title,
+        body,
+        NotificationDetails(android: androidDetails),
+        payload: payload,
+      );
+      log("SUCCESS: LOCATION ALARM SHOWN: id=$id");
+    } catch (e, s) {
+      log("Error showing location notification: $e", stackTrace: s);
+    }
   }
 
   static Future<void> scheduleExactAlarm({
@@ -118,7 +150,8 @@ class NotificationService {
     required DateTime when,
   }) async {
     await PermissionService.requestExactAlarmPermission();
-    final payload = '$id|$title|$body';
+
+    final payload = id.toString();
 
     final androidDetails = AndroidNotificationDetails(
       _channel.id,
@@ -133,16 +166,19 @@ class NotificationService {
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      // Buttons are removed.
-      sound: const RawResourceAndroidNotificationSound('alarm'),
       additionalFlags: Int32List.fromList([4]),
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction('dismiss', 'Dismiss'),
+      ],
     );
 
     var tzWhen = tz.TZDateTime.from(when, tz.local);
     final tzNow = tz.TZDateTime.now(tz.local);
     if (tzWhen.isBefore(tzNow)) {
-      tzWhen = tzNow.add(const Duration(seconds: 5));
+      tzWhen = tzNow.add(const Duration(seconds: 2));
     }
+
+    log("SCHEDULING ALARM: id=$id, title='$title', when=$tzWhen");
 
     try {
       await _notifications.zonedSchedule(
@@ -154,18 +190,9 @@ class NotificationService {
         payload: payload,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
-    } catch (e) {
-      log("Error scheduling via NotificationService: $e");
-    }
-  }
-
-  static Future<void> showLoudAlarm({
-    required int id,
-    required String title,
-    required String body,
-  }) async {
-    if (ContextService.shouldDeliverReminderNow()) {
-      await scheduleExactAlarm(id: id, title: title, body: body, when: DateTime.now().add(const Duration(seconds: 2)));
+      log("SUCCESS: ALARM SCHEDULED: id=$id");
+    } catch (e, s) {
+      log("Error scheduling notification: $e", stackTrace: s);
     }
   }
 

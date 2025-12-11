@@ -1,81 +1,100 @@
 import 'dart:async';
+import 'dart:developer';
+
+import 'package:activity_recognition_flutter/activity_recognition_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:smart_reminder/models/location.dart';
 import 'package:smart_reminder/models/reminder.dart';
 import 'package:smart_reminder/services/notification_service.dart';
 
 class ContextService {
   static String currentActivity = "UNKNOWN";
   static String currentLocationText = "Getting location...";
-  static Timer? _timer;
 
-  static void startListening() {
-    Geolocator.getPositionStream(
+  static StreamSubscription<Position>? _positionSubscription;
+  static StreamSubscription<ActivityEvent>? _activitySubscription;
+
+  static Future<void> startListening() async {
+    final contextBox = await Hive.openBox('context');
+    final remindersBox = Hive.box<Reminder>('reminders');
+    final locationsBox = Hive.box<Location>('locations');
+
+    // Start listening to activity recognition
+    _activitySubscription?.cancel();
+    final activityRecognition = ActivityRecognition();
+    _activitySubscription = activityRecognition.activityStream().listen((ActivityEvent event) {
+      log("New activity event: ${event.type.name}");
+      currentActivity = event.type.name;
+      contextBox.put('activity', currentActivity);
+    });
+
+    // Start listening to location updates
+    _positionSubscription?.cancel();
+    _positionSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       ),
-    ).listen((Position position) async {
-      currentLocationText = "Lat: ${position.latitude.toStringAsFixed(4)}, "
-          "Lng: ${position.longitude.toStringAsFixed(4)}";
+    ).listen(
+      (position) async {
+        currentLocationText =
+            "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
 
-      final speed = position.speed;
-      if (speed < 0.5) {
-        currentActivity = "STILL";
-      } else if (speed < 2.5) {
-        currentActivity = "WALKING";
-      } else if (speed < 10) {
-        currentActivity = "RUNNING / CYCLING";
-      } else {
-        currentActivity = "IN VEHICLE";
-      }
+        const double radius = 120; // Radius in meters
+        if (remindersBox.isEmpty) return;
 
-      final box = Hive.box('context');
-      await box.put('activity', currentActivity);
-      await box.put('location', currentLocationText);
-    });
+        for (var reminder in remindersBox.values) {
+          if (reminder.isLocationBased && reminder.active && !reminder.wasNotified) {
+            final location = locationsBox.get(reminder.locationKey);
 
-    _timer?.cancel();
-    // The timer now only checks for time-based reminders.
-    _timer = Timer.periodic(const Duration(seconds: 20), (timer) {
-      _checkTimeBasedReminders();
-    });
-  }
+            if (location != null) {
+              final distance = Geolocator.distanceBetween(
+                position.latitude,
+                position.longitude,
+                location.latitude,
+                location.longitude,
+              );
 
-  static void _checkTimeBasedReminders() {
-    final now = DateTime.now();
-    final box = Hive.box<Reminder>('reminders');
+              final bool inRange = distance <= radius;
 
-    for (final reminder in box.values) {
-      // Check if reminder is due and hasn't been notified yet.
-      if (reminder.active &&
-          !reminder.wasNotified &&
-          reminder.scheduledTime != null &&
-          now.isAfter(reminder.scheduledTime!)) {
-        // Check if the user is in a state to receive the notification.
-        if (shouldDeliverReminderNow()) {
-          final int reminderId = reminder.key as int;
+              if (inRange && shouldDeliverReminderNow()) {
+                log("DELIVERING REMINDER: ${reminder.title}");
 
-          NotificationService.showLoudAlarm(
-            id: reminderId,
-            title: "TIME'S UP!",
-            body: reminder.title,
-          );
+                await NotificationService.scheduleExactAlarm(
+                  id: reminder.key as int,
+                  title: reminder.title,
+                  body: "You are at ${location.name}!",
+                  when: DateTime.now().add(const Duration(seconds: 1)),
+                );
 
-          // Mark as notified to prevent re-triggering.
-          // The user can manually delete it from the app list later.
-          reminder.wasNotified = true;
-          reminder.save();
+                reminder.wasNotified = true;
+                await reminder.save();
+              }
+            }
+          }
         }
-      }
-    }
+      },
+      onError: (error) {
+        log("Location stream error: $error");
+        currentLocationText = "Location error";
+      },
+    );
   }
 
   static bool shouldDeliverReminderNow() {
-    // A user is considered available if they are not moving too fast.
     return currentActivity == "STILL" || currentActivity == "WALKING";
   }
 
-  static String getCurrentActivity() => currentActivity;
+  static Future<String> getCurrentActivity() async {
+    final box = await Hive.openBox('context');
+    return box.get('activity', defaultValue: 'UNKNOWN');
+  }
+
   static String getCurrentLocation() => currentLocationText;
+
+  static void dispose() {
+    _positionSubscription?.cancel();
+    _activitySubscription?.cancel();
+  }
 }

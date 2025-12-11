@@ -2,49 +2,42 @@ import 'package:hive/hive.dart';
 
 part 'reminder.g.dart';
 
-
 @HiveType(typeId: 0)
 class Reminder extends HiveObject {
   @HiveField(0)
   String title;
 
+  // New field for location key. Replaces locationName, lat, and lng.
   @HiveField(1)
-  String? locationName;  
+  dynamic locationKey;
+
   @HiveField(2)
-  double? lat;
-
-  @HiveField(3)
-  double? lng;
-
-  @HiveField(4)
   String triggerType; // "Location" or "Time"
 
-  @HiveField(5)
+  @HiveField(3)
   DateTime? scheduledTime;
 
-  @HiveField(6)
+  @HiveField(4)
   DateTime created;
 
-  @HiveField(7)
+  @HiveField(5)
   bool active;
 
-  @HiveField(8)
-  String triggerMode; // "ARRIVE", "LEAVE", "BOTH"
+  @HiveField(6)
+  String triggerMode; // "ARRIVE", "LEAVE", "BOTH" (for future use)
 
-  @HiveField(9)
+  @HiveField(7)
   Map<String, int> ignoredContexts;
 
-  @HiveField(10)
+  @HiveField(8)
   List<String> permanentlyBlockedIn;
 
-  @HiveField(11)
+  @HiveField(9)
   bool wasNotified;
 
   Reminder({
     required this.title,
-    this.locationName,                    // ← NOW OPTIONAL
-    this.lat,
-    this.lng,
+    this.locationKey,
     required this.triggerType,
     this.scheduledTime,
     required this.created,
@@ -77,10 +70,10 @@ class Reminder extends HiveObject {
   int get totalIgnores => ignoredContexts.values.fold(0, (a, b) => a + b);
 
   bool get isTimeBased => triggerType == "Time";
-  bool get isLocationBased => triggerType == "Location";
+  bool get isLocationBased => triggerType == "Location" && locationKey != null;
 
   @override
   String toString() {
-    return 'Reminder("$title" - $triggerType${locationName != null ? " at $locationName" : ""})';
+    return 'Reminder("$title" - $triggerType at key: $locationKey)';
   }
 }

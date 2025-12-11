@@ -1,64 +1,63 @@
+import 'dart:async';
 import 'package:geolocator/geolocator.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-
-import '../models/reminder.dart';
-import 'notification_service.dart';
-import '../services/context_service.dart';
-
+import 'package:hive/hive.dart';
+import 'package:smart_reminder/models/location.dart';
+import 'package:smart_reminder/models/reminder.dart';
+import 'package:smart_reminder/services/location_service.dart';
+import 'package:smart_reminder/services/notification_service.dart';
 
 class GeofenceService {
-  static const double _radius = 120; // in meters
+  static StreamSubscription<Position>? _positionStream;
 
-  static Future<void> registerAll() async {
-    final box = Hive.box<Reminder>('reminders');
-    for (final reminder in box.values.where((r) =>
-        r.active &&
-        r.triggerType == "Location" &&
-        r.lat != null &&
-        r.lng != null)) {
-      _monitorLocation(reminder);
-    }
-  }
-
-  static Future<void> addNewLocationReminder(Reminder reminder) async {
-    if (reminder.lat != null && reminder.lng != null) {
-      _monitorLocation(reminder);
-    }
-  }
-
-  static void _monitorLocation(Reminder reminder) {
-    Geolocator.getPositionStream(
+  static void start() {
+    _positionStream?.cancel();
+    _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 25,
+        distanceFilter: 100, // Trigger check every 100 meters
       ),
-    ).listen((Position position) async {
-      final distance = Geolocator.distanceBetween(
-        position.latitude,
-        position.longitude,
-        reminder.lat!,
-        reminder.lng!,
-      );
+    ).listen((position) {
+      _checkGeofences(position);
+    });
+  }
 
-      // Only trigger if close AND reminder still active
-      if (distance <= _radius && reminder.active) {
-        // NEW: Check context before firing notification
-        if (ContextService.shouldDeliverReminderNow()) {
-          final int reminderId = reminder.key is int
-              ? reminder.key as int
-              : int.parse(reminder.key.toString());
+  static void stop() {
+    _positionStream?.cancel();
+  }
 
-          await NotificationService.showLoudAlarm(
-            id: reminderId,
-            title: "YOU HAVE ARRIVED!",
-            body: reminder.title,
+  static void _checkGeofences(Position position) {
+    final reminderBox = Hive.box<Reminder>('reminders');
+    // Get active, location-based reminders that haven't been notified yet
+    final reminders = reminderBox.values.where((r) => r.active && r.isLocationBased && !r.wasNotified);
+    final locations = LocationService.getSavedLocations();
+
+    for (final reminder in reminders) {
+      if (reminder.locationKey != null) {
+        // Find the location associated with the reminder
+        final location = locations.firstWhere((loc) => loc.key == reminder.locationKey, orElse: () => Location(name: '', latitude: 0, longitude: 0));
+
+        // Check if a valid location was found
+        if (location.name.isNotEmpty) {
+          final distance = Geolocator.distanceBetween(
+            position.latitude,
+            position.longitude,
+            location.latitude,
+            location.longitude,
           );
 
-          // Mark as delivered (only once)
-          reminder.active = false;
-          await reminder.save();
+          // If user is within the 100-meter radius
+          if (distance <= 100) {
+            // Show notification and mark the reminder as notified
+            NotificationService.showLocationReminder(
+              id: reminder.key,
+              title: reminder.title,
+              body: 'You have arrived at ${location.name}',
+            );
+            reminder.wasNotified = true;
+            reminder.save();
+          }
         }
       }
-    });
+    }
   }
 }

@@ -18,47 +18,41 @@ class ReminderAdapter extends TypeAdapter<Reminder> {
     };
     return Reminder(
       title: fields[0] as String,
-      locationName: fields[1] as String?,
-      lat: fields[2] as double?,
-      lng: fields[3] as double?,
-      triggerType: fields[4] as String,
-      scheduledTime: fields[5] as DateTime?,
-      created: fields[6] as DateTime,
-      active: fields[7] as bool,
-      triggerMode: fields[8] as String,
-      ignoredContexts: (fields[9] as Map?)?.cast<String, int>(),
-      permanentlyBlockedIn: (fields[10] as List?)?.cast<String>(),
-      wasNotified: fields[11] as bool,
+      locationKey: fields[1] as dynamic,
+      triggerType: fields[2] as String,
+      scheduledTime: fields[3] as DateTime?,
+      created: fields[4] as DateTime,
+      active: fields[5] as bool,
+      triggerMode: fields[6] as String,
+      ignoredContexts: (fields[7] as Map?)?.cast<String, int>(),
+      permanentlyBlockedIn: (fields[8] as List?)?.cast<String>(),
+      wasNotified: fields[9] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, Reminder obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.title)
       ..writeByte(1)
-      ..write(obj.locationName)
+      ..write(obj.locationKey)
       ..writeByte(2)
-      ..write(obj.lat)
-      ..writeByte(3)
-      ..write(obj.lng)
-      ..writeByte(4)
       ..write(obj.triggerType)
-      ..writeByte(5)
+      ..writeByte(3)
       ..write(obj.scheduledTime)
-      ..writeByte(6)
+      ..writeByte(4)
       ..write(obj.created)
-      ..writeByte(7)
+      ..writeByte(5)
       ..write(obj.active)
-      ..writeByte(8)
+      ..writeByte(6)
       ..write(obj.triggerMode)
-      ..writeByte(9)
+      ..writeByte(7)
       ..write(obj.ignoredContexts)
-      ..writeByte(10)
+      ..writeByte(8)
       ..write(obj.permanentlyBlockedIn)
-      ..writeByte(11)
+      ..writeByte(9)
       ..write(obj.wasNotified);
   }
 

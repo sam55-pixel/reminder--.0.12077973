@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
+import '../models/location.dart';
 import '../models/reminder.dart';
 
 class ReminderCard extends StatelessWidget {
@@ -14,19 +16,19 @@ class ReminderCard extends StatelessWidget {
   });
 
   // Smart icon based on reminder type/title/location
-  IconData get _icon {
+  IconData _getIcon(String? locationName) {
     if (!reminder.active) return Icons.notifications_off;
     if (reminder.triggerType == "Time") return Icons.access_time_filled;
 
-    final location = reminder.locationName?.toLowerCase().trim() ?? "";
-    
+    final location = locationName?.toLowerCase().trim() ?? "";
+
     if (location.contains('home')) return Icons.home_filled;
     if (location.contains('work') || location.contains('office')) return Icons.work;
     if (location.contains('gym') || location.contains('fitness')) return Icons.fitness_center;
     if (location.contains('school') || location.contains('class')) return Icons.school;
     if (location.contains('church') || location.contains('mosque')) return Icons.mosque;
     if (location.contains('market') || location.contains('shop')) return Icons.store;
-    
+
     return Icons.location_on;
   }
 
@@ -59,6 +61,14 @@ class ReminderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Fetch location name for location-based reminders
+    String? locationName;
+    if (reminder.isLocationBased) {
+      final locationsBox = Hive.box<Location>('locations');
+      final location = locationsBox.get(reminder.locationKey);
+      locationName = location?.name;
+    }
+
     return Dismissible(
       key: ValueKey(reminder.key),
       direction: DismissDirection.endToStart,
@@ -77,12 +87,12 @@ class ReminderCard extends StatelessWidget {
           contentPadding: const EdgeInsets.all(16),
           leading: CircleAvatar(
             radius: 28,
-            backgroundColor: _color.withValues(alpha: 0.15),
-            child: Icon(_icon, color: _color, size: 28),
+            backgroundColor: _color.withAlpha(40), // Corrected alpha blending
+            child: Icon(_getIcon(locationName), color: _color, size: 28),
           ),
           title: Text(
             reminder.title,
-            style: const TextStyle(fontWeight:  FontWeight.bold, fontSize: 17),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -94,10 +104,10 @@ class ReminderCard extends StatelessWidget {
                 spacing: 8,
                 children: [
                   // Location chip (only show if exists)
-                  if (reminder.locationName != null && reminder.locationName!.trim().isNotEmpty)
+                  if (locationName != null && locationName.trim().isNotEmpty)
                     Chip(
                       label: Text(
-                        reminder.locationName!,
+                        locationName,
                         style: const TextStyle(fontSize: 12),
                       ),
                       avatar: const Icon(Icons.location_on, size: 16),
@@ -128,16 +138,16 @@ class ReminderCard extends StatelessWidget {
             ],
           ),
           trailing: Switch(
-  value: reminder.active,
-  onChanged: (_) => onToggle(),
-  thumbColor: WidgetStateProperty.resolveWith<Color>((states) {
-    if (states.contains(WidgetState.selected)) {
-      return Colors.deepPurple; 
-    }
-    return Colors.grey; 
-  }),
-),
-onTap: onDismiss,
+            value: reminder.active,
+            onChanged: (_) => onToggle(),
+            thumbColor: WidgetStateProperty.resolveWith<Color>((states) {
+              if (states.contains(WidgetState.selected)) {
+                return Colors.deepPurple;
+              }
+              return Colors.grey;
+            }),
+          ),
+          onTap: onDismiss,
         ),
       ),
     );

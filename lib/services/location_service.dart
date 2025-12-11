@@ -1,38 +1,63 @@
-import 'dart:async';
 import 'package:geolocator/geolocator.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:smart_reminder/models/location.dart';
 
 class LocationService {
-  /// High-accuracy position stream that works in foreground & background
-  static Stream<Position> get positionStream => Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10, // only emit when moved 10+ meters
-        ),
-      );
+  static const String _boxName = 'locations';
 
-  /// One-time current position (used in create reminder screen)
+  static Future<void> init() async {
+    if (!Hive.isAdapterRegistered(LocationAdapter().typeId)) {
+      Hive.registerAdapter(LocationAdapter());
+    }
+    await Hive.openBox<Location>(_boxName);
+  }
+
   static Future<Position> getCurrentPosition() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      throw Exception("Location services are disabled.");
+      return Future.error('Location services are disabled.');
     }
 
-    LocationPermission permission = await Geolocator.checkPermission();
+    permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        throw Exception("Location permissions are denied");
+        return Future.error('Location permissions are denied');
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      throw Exception("Location permissions are permanently denied");
+      return Future.error(
+          'Location permissions are permanently denied, we cannot request permissions.');
     }
 
-    return await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
+    return await Geolocator.getCurrentPosition();
+  }
+
+  static Future<void> saveLocation({
+    required String name,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final box = Hive.box<Location>(_boxName);
+    final location = Location(
+      name: name,
+      latitude: latitude,
+      longitude: longitude,
     );
+    await box.add(location);
+  }
+
+  static List<Location> getSavedLocations() {
+    final box = Hive.box<Location>(_boxName);
+    return box.values.toList();
+  }
+
+  static Future<void> deleteLocation(dynamic key) async {
+    final box = Hive.box<Location>(_boxName);
+    await box.delete(key);
   }
 }

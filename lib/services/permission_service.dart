@@ -7,7 +7,8 @@ class PermissionService {
     await [Permission.location, 
            Permission.locationAlways, 
            Permission.notification, 
-           Permission.activityRecognition].request();
+           Permission.activityRecognition,
+           Permission.scheduleExactAlarm].request();
   }
 
   static Future<void> requestExactAlarmPermission() async {

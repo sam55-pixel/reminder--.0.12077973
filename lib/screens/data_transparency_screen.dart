@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 
+import '../models/location.dart';
 import '../models/reminder.dart';
 
 class DataTransparencyScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class DataTransparencyScreen extends StatefulWidget {
 class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
   String _dbPath = "Loading...";
   List<Reminder> _reminders = [];
+  Map<dynamic, String> _locationNames = {};
 
   @override
   void initState() {
@@ -24,24 +26,42 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
 
   Future<void> _loadData() async {
     final dir = await getApplicationDocumentsDirectory();
-    final box = Hive.box<Reminder>('reminders');
+    final remindersBox = Hive.box<Reminder>('reminders');
+    final locationsBox = Hive.box<Location>('locations');
+
+    final reminders = remindersBox.values.toList();
+    final locationNames = <dynamic, String>{};
+
+    for (final r in reminders) {
+      if (r.isLocationBased) {
+        final location = locationsBox.get(r.locationKey);
+        if (location != null) {
+          locationNames[r.locationKey] = location.name;
+        }
+      }
+    }
 
     if (!mounted) return;
 
     setState(() {
       _dbPath = dir.path;
-      _reminders = box.values.toList();
+      _reminders = reminders;
+      _locationNames = locationNames;
     });
   }
 
   Future<void> _deleteReminder(Reminder reminder) async {
+    if (!mounted) return;
+
+    final locationName = reminder.isLocationBased ? _locationNames[reminder.locationKey] : null;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.warning_amber, color: Colors.orange, size: 40),
         title: const Text("Delete Reminder?"),
         content: Text(
-          "Permanently delete:\n\n\"${reminder.title}\"\n\n${reminder.locationName != null ? "at ${reminder.locationName}" : "(Time-based reminder)"}",
+          'Permanently delete:nn"${reminder.title}"nn${locationName != null ? "at $locationName" : "(Time-based reminder)"}',
           style: const TextStyle(height: 1.4),
         ),
         actions: [
@@ -55,34 +75,38 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
       ),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true) return;
 
+    final title = reminder.title;
     await reminder.delete();
-    await _loadData();
+    await _loadData(); // Reload data to update UI
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Deleted: ${reminder.title}"),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
-    }
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Deleted: $title"),
+        backgroundColor: Colors.red.shade600,
+      ),
+    );
   }
 
-  Map<String, dynamic> _reminderToMap(Reminder r) => {
-        'key': r.key,
-        'title': r.title,
-        'location': r.locationName, // ← nullable, JSON handles null fine
-        'lat': r.lat,
-        'lng': r.lng,
-        'trigger': r.triggerType,
-        'active': r.active,
-        'created': r.created.toIso8601String(),
-        'scheduledTime': r.scheduledTime?.toIso8601String(),
-        'ignoredContexts': r.ignoredContexts,
-        'permanentlyBlockedIn': r.permanentlyBlockedIn,
-      };
+  Map<String, dynamic> _reminderToMap(Reminder r) {
+    final location = r.isLocationBased ? Hive.box<Location>('locations').get(r.locationKey) : null;
+    return {
+      'key': r.key,
+      'title': r.title,
+      'locationName': location?.name,
+      'latitude': location?.latitude,
+      'longitude': location?.longitude,
+      'triggerType': r.triggerType,
+      'active': r.active,
+      'created': r.created.toIso8601String(),
+      'scheduledTime': r.scheduledTime?.toIso8601String(),
+      'ignoredContexts': r.ignoredContexts,
+      'permanentlyBlockedIn': r.permanentlyBlockedIn,
+    };
+  }
 
   IconData _getIcon(Reminder r) {
     if (!r.active) return Icons.notifications_off;
@@ -96,6 +120,43 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
     return Colors.green;
   }
 
+  Future<void> _nukeAllData() async {
+    if (!mounted) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.dangerous, color: Colors.red, size: 50),
+        title: const Text("NUKE ALL DATA?"),
+        content: const Text("This will delete every reminder forever.\n\nNo backup. No recovery."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Keep")),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("DELETE EVERYTHING"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await Hive.box<Reminder>('reminders').clear();
+    await Hive.box<Location>('locations').clear();
+    await Hive.box('settings').clear();
+    await _loadData();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("All data erased from device"),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -107,39 +168,7 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             tooltip: "Delete ALL data",
-            onPressed: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  icon: const Icon(Icons.dangerous, color: Colors.red, size: 50),
-                  title: const Text("NUKE ALL DATA?"),
-                  content: const Text("This will delete every reminder forever.\n\nNo backup. No recovery."),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Keep")),
-                    TextButton(
-                      style: TextButton.styleFrom(foregroundColor: Colors.red),
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text("DELETE EVERYTHING"),
-                    ),
-                  ],
-                ),
-              );
-
-              if (confirm != true) return;
-
-              await Hive.box<Reminder>('reminders').clear();
-              await Hive.box('settings').clear();
-              await _loadData();
-
-              if (!mounted) return;
-
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("All data erased from device"),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            },
+            onPressed: _nukeAllData,
           ),
         ],
       ),
@@ -189,6 +218,8 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
                       itemCount: _reminders.length,
                       itemBuilder: (context, index) {
                         final r = _reminders[index];
+                        final locationName = r.isLocationBased ? _locationNames[r.locationKey] : null;
+
                         return Dismissible(
                           key: Key(r.key.toString()),
                           direction: DismissDirection.endToStart,
@@ -207,8 +238,8 @@ class _DataTransparencyScreenState extends State<DataTransparencyScreen> {
                               leading: Icon(_getIcon(r), color: _getColor(r)),
                               title: Text(r.title, style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Text(
-                                r.locationName ?? "(Time-based reminder)",
-                                style: TextStyle(color: r.locationName == null ? Colors.grey : null),
+                                locationName ?? "(Time-based reminder)",
+                                style: TextStyle(color: locationName == null ? Colors.grey : null),
                               ),
                               trailing: r.active
                                   ? const Icon(Icons.notifications_active, color: Colors.green)
