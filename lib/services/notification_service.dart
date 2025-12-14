@@ -10,7 +10,9 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse notificationResponse) async {
+void notificationTapBackground(
+  NotificationResponse notificationResponse,
+) async {
   log("Notification action received: ${notificationResponse.actionId}");
 
   await Hive.initFlutter();
@@ -56,7 +58,6 @@ void notificationTapBackground(NotificationResponse notificationResponse) async 
   await box.close();
 }
 
-
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -69,10 +70,12 @@ class NotificationService {
     playSound: true,
     enableVibration: true,
     showBadge: true,
+    sound: RawResourceAndroidNotificationSound('alarm'),
   );
 
   // New channel for location-based alarms
-  static final AndroidNotificationChannel _locationAlarmChannel = AndroidNotificationChannel(
+  static final AndroidNotificationChannel _locationAlarmChannel =
+      AndroidNotificationChannel(
     'location_alarm_channel',
     'Location Alarms',
     description: 'Channel for high-priority location-based alarms.',
@@ -80,9 +83,8 @@ class NotificationService {
     playSound: true,
     enableVibration: true,
     showBadge: true,
-    sound: RawResourceAndroidNotificationSound('loud_alarm'), // Use a custom raw sound
+    sound: RawResourceAndroidNotificationSound('alarm'),
   );
-
 
   static Future<void> init() async {
     tz_data.initializeTimeZones();
@@ -96,10 +98,12 @@ class NotificationService {
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
     );
 
-    final androidPlugin = _notifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(_channel);
-    await androidPlugin?.createNotificationChannel(_locationAlarmChannel); // Create the new channel
+    await androidPlugin?.createNotificationChannel(
+      _locationAlarmChannel,
+    ); // Create the new channel
   }
 
   // New method for showing a persistent, full-screen location alarm
@@ -108,6 +112,9 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
+    // THIS IS THE FIX: Request notification permission before showing.
+    await PermissionService.requestNotificationPermission();
+
     final payload = id.toString();
 
     final androidDetails = AndroidNotificationDetails(
@@ -149,6 +156,8 @@ class NotificationService {
     required String body,
     required DateTime when,
   }) async {
+    // THIS IS THE FIX: Request both necessary permissions before scheduling.
+    await PermissionService.requestNotificationPermission();
     await PermissionService.requestExactAlarmPermission();
 
     final payload = id.toString();
@@ -160,9 +169,9 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       fullScreenIntent: false,
-      ongoing: false,
-      autoCancel: true,
-      category: AndroidNotificationCategory.alarm,
+      ongoing: true, // Makes the notification persistent
+      autoCancel: false, // User must interact with it
+      sound: _channel.sound,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),

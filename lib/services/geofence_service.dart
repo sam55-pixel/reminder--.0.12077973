@@ -3,7 +3,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:hive/hive.dart';
 import 'package:smart_reminder/models/location.dart';
 import 'package:smart_reminder/models/reminder.dart';
-import 'package:smart_reminder/services/location_service.dart';
 import 'package:smart_reminder/services/notification_service.dart';
 
 class GeofenceService {
@@ -27,17 +26,19 @@ class GeofenceService {
 
   static void _checkGeofences(Position position) {
     final reminderBox = Hive.box<Reminder>('reminders');
+    final locationsBox = Hive.box<Location>('locations');
+
     // Get active, location-based reminders that haven't been notified yet
-    final reminders = reminderBox.values.where((r) => r.active && r.isLocationBased && !r.wasNotified);
-    final locations = LocationService.getSavedLocations();
+    final reminders =
+        reminderBox.values.where((r) => r.active && r.isLocationBased && !r.wasNotified);
 
     for (final reminder in reminders) {
       if (reminder.locationKey != null) {
-        // Find the location associated with the reminder
-        final location = locations.firstWhere((loc) => loc.key == reminder.locationKey, orElse: () => Location(name: '', latitude: 0, longitude: 0));
+        // Find the location associated with the reminder directly from the box
+        final location = locationsBox.get(reminder.locationKey);
 
         // Check if a valid location was found
-        if (location.name.isNotEmpty) {
+        if (location != null) {
           final distance = Geolocator.distanceBetween(
             position.latitude,
             position.longitude,
@@ -49,7 +50,7 @@ class GeofenceService {
           if (distance <= 100) {
             // Show notification and mark the reminder as notified
             NotificationService.showLocationReminder(
-              id: reminder.key,
+              id: reminder.key as int, // Cast key to int
               title: reminder.title,
               body: 'You have arrived at ${location.name}',
             );

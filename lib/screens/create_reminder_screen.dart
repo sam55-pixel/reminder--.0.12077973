@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_reminder/models/location.dart';
 import 'package:smart_reminder/services/location_service.dart';
 
 import '../models/reminder.dart';
@@ -132,7 +133,7 @@ class _CreateReminderScreenState extends State<CreateReminderScreen> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         prefixIcon: const Icon(Icons.map_outlined),
       ),
-      items: locations.map((location) {
+      items: locations.whereType<Location>().map((location) {
         return DropdownMenuItem<dynamic>(
           value: location.key,
           child: Text(location.name),

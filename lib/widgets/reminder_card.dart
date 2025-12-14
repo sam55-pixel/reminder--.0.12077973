@@ -123,15 +123,56 @@ class ReminderCard extends StatelessWidget {
 
                   // Learned AI chip
                   if (reminder.permanentlyBlockedIn.isNotEmpty || reminder.totalIgnores > 0)
-                    Chip(
-                      label: Text(
-                        reminder.permanentlyBlockedIn.isNotEmpty
-                            ? "Learned ($_context)"
-                            : "Ignored ${reminder.totalIgnores} times",
-                        style: const TextStyle(fontSize: 11),
+                    GestureDetector(
+                      onTap: () {
+                        // Find the most ignored context that is not yet blocked
+                        String? mostIgnoredContext;
+                        int maxIgnores = 0;
+                        reminder.ignoredContexts.forEach((context, count) {
+                          if (count > maxIgnores && !reminder.isBlockedIn(context)) {
+                            maxIgnores = count;
+                            mostIgnoredContext = context;
+                          }
+                        });
+
+                        if (mostIgnoredContext != null) {
+                          showDialog(
+                            context: context,
+                            builder: (BuildContext dialogContext) {
+                              return AlertDialog(
+                                title: const Text('Block Reminder?'),
+                                content: Text('You often ignore this reminder while in context: $mostIgnoredContext. Would you like to block it in this context?'),
+                                actions: <Widget>[
+                                  TextButton(
+                                    child: const Text('Cancel'),
+                                    onPressed: () {
+                                      Navigator.of(dialogContext).pop();
+                                    },
+                                  ),
+                                  TextButton(
+                                    child: const Text('Block'),
+                                    onPressed: () {
+                                      reminder.blockInContext(mostIgnoredContext!);
+                                      reminder.save();
+                                      Navigator.of(dialogContext).pop();
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        }
+                      },
+                      child: Chip(
+                        label: Text(
+                          reminder.permanentlyBlockedIn.isNotEmpty
+                              ? "Learned ($_context)"
+                              : "Ignored ${reminder.totalIgnores} times",
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        avatar: const Icon(Icons.auto_awesome, size: 16, color: Colors.orange),
+                        backgroundColor: Colors.orange.shade50,
                       ),
-                      avatar: const Icon(Icons.auto_awesome, size: 16, color: Colors.orange),
-                      backgroundColor: Colors.orange.shade50,
                     ),
                 ],
               ),

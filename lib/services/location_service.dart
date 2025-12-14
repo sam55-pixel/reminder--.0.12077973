@@ -1,14 +1,12 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:smart_reminder/models/location.dart';
+import '../models/location.dart';
 
 class LocationService {
   static const String _boxName = 'locations';
 
   static Future<void> init() async {
-    if (!Hive.isAdapterRegistered(LocationAdapter().typeId)) {
-      Hive.registerAdapter(LocationAdapter());
-    }
+    // Adapter is registered in hive_initializer.dart, so no need to check here.
     await Hive.openBox<Location>(_boxName);
   }
 
