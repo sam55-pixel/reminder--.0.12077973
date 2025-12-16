@@ -1,30 +1,41 @@
 import 'package:flutter/material.dart';
-
-import 'app_initializer.dart';
-import 'screens/home_screen.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:smart_reminder/models/location.dart';
+import 'package:smart_reminder/models/reminder.dart';
+import 'package:smart_reminder/services/context_service.dart';
+import 'package:smart_reminder/services/location_service.dart';
+import 'package:smart_reminder/services/notification_service.dart';
+import 'package:smart_reminder/screens/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize the app
-  await AppInitializer.initialize();
+  // Initialize Hive - this MUST be done for all models.
+  await Hive.initFlutter();
+  Hive.registerAdapter(ReminderAdapter());
+  Hive.registerAdapter(LocationAdapter());
+  await Hive.openBox<Reminder>('reminders');
+  await Hive.openBox<Location>('locations');
+  await Hive.openBox('context');
 
-  // Run the app
-  runApp(const ReminderApp());
+  // Initialize services that DO NOT require UI.
+  await NotificationService.init();
+  await ContextService.startListening();
+  await LocationService.init();
+
+  runApp(const MyApp());
 }
 
-class ReminderApp extends StatelessWidget {
-  const ReminderApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Stoic Oracle',
-      debugShowCheckedModeBanner: false,
+      title: 'Smart Reminder',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-        fontFamily: 'Poppins',
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       home: const HomeScreen(),
     );

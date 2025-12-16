@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:smart_reminder/services/permission_service.dart'; // CORRECTED: Import permission service
 
 import 'reminders_screen.dart';
 import 'create_reminder_screen.dart';
@@ -29,7 +30,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // CORRECTED: Request permissions when the UI is ready.
+    _requestPermissions();
     _startLocationAndActivityDetection();
+  }
+
+  // CORRECTED: New method to handle permission requests.
+  Future<void> _requestPermissions() async {
+    await PermissionService.requestInitialPermissions();
   }
 
   @override

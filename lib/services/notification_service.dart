@@ -25,35 +25,37 @@ void notificationTapBackground(
   final id = int.tryParse(notificationResponse.payload!);
   if (id == null) return;
 
-  // Always cancel the notification to remove the sticky alarm
-  await NotificationService.cancel(id);
+  // No need to manually cancel anymore, autoCancel: true handles it.
 
   final box = await Hive.openBox<Reminder>('reminders');
   final reminder = box.get(id);
 
   if (reminder != null) {
     switch (notificationResponse.actionId) {
-      case 'dismiss':
+      case 'ignore':
         final currentContext = await ContextService.getCurrentActivity();
         reminder.ignored(currentContext);
         log('Reminder #${reminder.key} ignored in context: $currentContext');
         break;
       case 'snooze_10':
         log('Snoozing reminder #${reminder.key} for 10 minutes.');
+        // After snoozing, we need to re-schedule the alarm.
         await NotificationService.scheduleExactAlarm(
           id: id,
           title: reminder.title,
           body: "Snoozed for 10 minutes", // General snooze message
           when: DateTime.now().add(const Duration(minutes: 10)),
         );
-        // Reminder stays active
+        // Reminder stays active, no need to save.
         break;
-      default: // Default tap action
+      case 'task_done': // Explicit "Done" button
+      default: // Default tap action also means "Done"
+        log('Reminder #${reminder.key} marked as done.');
         reminder.wasNotified = true;
         reminder.active = false;
+        await reminder.save(); // Save the state change.
         break;
     }
-    await reminder.save();
   }
   await box.close();
 }
@@ -63,9 +65,9 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   static final AndroidNotificationChannel _channel = AndroidNotificationChannel(
-    'smart_reminder_channel',
-    'Smart Reminders',
-    description: 'Channel for important reminder notifications.',
+    'smart_reminder_alarms_v2', // V2 Channel ID
+    'Smart Reminder Alarms',      // V2 Channel Name
+    description: 'Channel for important, insistent reminder alarms.',
     importance: Importance.max,
     playSound: true,
     enableVibration: true,
@@ -73,12 +75,11 @@ class NotificationService {
     sound: RawResourceAndroidNotificationSound('alarm'),
   );
 
-  // New channel for location-based alarms
   static final AndroidNotificationChannel _locationAlarmChannel =
       AndroidNotificationChannel(
-    'location_alarm_channel',
-    'Location Alarms',
-    description: 'Channel for high-priority location-based alarms.',
+    'location_alarms_v2', // V2 Channel ID
+    'Location Alarms',      // V2 Channel Name
+    description: 'Channel for high-priority, insistent location-based alarms.',
     importance: Importance.max,
     playSound: true,
     enableVibration: true,
@@ -101,18 +102,14 @@ class NotificationService {
     final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(_channel);
-    await androidPlugin?.createNotificationChannel(
-      _locationAlarmChannel,
-    ); // Create the new channel
+    await androidPlugin?.createNotificationChannel(_locationAlarmChannel);
   }
 
-  // New method for showing a persistent, full-screen location alarm
   static Future<void> showLocationReminder({
     required int id,
     required String title,
     required String body,
   }) async {
-    // THIS IS THE FIX: Request notification permission before showing.
     await PermissionService.requestNotificationPermission();
 
     final payload = id.toString();
@@ -123,16 +120,18 @@ class NotificationService {
       channelDescription: _locationAlarmChannel.description,
       importance: Importance.max,
       priority: Priority.high,
-      fullScreenIntent: true, // This is key for full-screen alerts
-      ongoing: true, // Makes the notification persistent
-      autoCancel: false, // User must interact with it
+      fullScreenIntent: true,
+      ongoing: false, // CORRECTED
+      autoCancel: true, // CORRECTED
       sound: _locationAlarmChannel.sound,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
+      additionalFlags: Int32List.fromList([4]), // Insistent flag
       actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction('task_done', 'Task Done'),
         const AndroidNotificationAction('snooze_10', 'Snooze 10m'),
-        const AndroidNotificationAction('dismiss', 'Dismiss'),
+        const AndroidNotificationAction('ignore', 'Ignore'),
       ],
     );
 
@@ -156,7 +155,6 @@ class NotificationService {
     required String body,
     required DateTime when,
   }) async {
-    // THIS IS THE FIX: Request both necessary permissions before scheduling.
     await PermissionService.requestNotificationPermission();
     await PermissionService.requestExactAlarmPermission();
 
@@ -169,15 +167,16 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       fullScreenIntent: false,
-      ongoing: true, // Makes the notification persistent
-      autoCancel: false, // User must interact with it
+      ongoing: false, // CORRECTED
+      autoCancel: true, // CORRECTED
       sound: _channel.sound,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      additionalFlags: Int32List.fromList([4]),
+      additionalFlags: Int32List.fromList([4]), // Insistent flag
       actions: <AndroidNotificationAction>[
-        const AndroidNotificationAction('dismiss', 'Dismiss'),
+        const AndroidNotificationAction('task_done', 'Task Done'),
+        const AndroidNotificationAction('ignore', 'Ignore'),
       ],
     );
 
