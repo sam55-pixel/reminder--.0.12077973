@@ -5,6 +5,8 @@ import 'package:smart_reminder/models/location.dart';
 import 'package:smart_reminder/services/context_service.dart';
 import '../models/reminder.dart';
 import '../services/ui_message_service.dart';
+// CORRECTED: Import the activity recognition package with the same prefix used in the service.
+import 'package:activity_recognition_flutter/activity_recognition_flutter.dart' as ar;
 
 class RemindersScreen extends StatefulWidget {
   const RemindersScreen({super.key});
@@ -58,7 +60,8 @@ class _RemindersScreenState extends State<RemindersScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: FutureBuilder<String>(
+      // CORRECTED: The FutureBuilder now expects the prefixed ar.ActivityType.
+      body: FutureBuilder<ar.ActivityType>(
         future: ContextService.getCurrentActivity(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -68,7 +71,8 @@ class _RemindersScreenState extends State<RemindersScreen> {
             return const Center(child: Text("Error loading context"));
           }
 
-          final currentContext = snapshot.data ?? "UNKNOWN";
+          // CORRECTED: snapshot.data is now an ar.ActivityType object, so we get its .name property.
+          final currentContext = snapshot.data?.name ?? "UNKNOWN";
 
           return ValueListenableBuilder(
             valueListenable: Hive.box<Reminder>('reminders').listenable(),
@@ -214,7 +218,6 @@ class _RemindersScreenState extends State<RemindersScreen> {
                                 onPressed: () {
                                   r.blockInContext(currentContext);
                                   r.save();
-                                  // No need for setState since ValueListenableBuilder will handle it
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text('Reminder blocked for "$currentContext" context.'),

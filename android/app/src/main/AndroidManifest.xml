@@ -20,6 +20,12 @@
         android:label="smart_reminder"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- CORRECTED: Disable Impeller to fix shader compilation errors on some emulators -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

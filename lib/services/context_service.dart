@@ -1,100 +1,113 @@
 import 'dart:async';
 import 'dart:developer';
-
-import 'package:activity_recognition_flutter/activity_recognition_flutter.dart';
+// CORRECTED: Use a prefix to resolve the name conflict with geolocator's ActivityType.
+import 'package:activity_recognition_flutter/activity_recognition_flutter.dart' as ar;
 import 'package:geolocator/geolocator.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive/hive.dart';
 import 'package:smart_reminder/models/location.dart';
 import 'package:smart_reminder/models/reminder.dart';
 import 'package:smart_reminder/services/notification_service.dart';
 
 class ContextService {
-  static String currentActivity = "UNKNOWN";
-  static String currentLocationText = "Getting location...";
-
-  static StreamSubscription<Position>? _positionSubscription;
-  static StreamSubscription<ActivityEvent>? _activitySubscription;
+  // Use the prefixed constructor
+  static final ar.ActivityRecognition activityRecognition = ar.ActivityRecognition();
+  // Use the prefixed type
+  static StreamSubscription<ar.ActivityEvent>? _activityStreamSubscription;
+  static StreamSubscription<Position>? _positionStreamSubscription;
+  static Timer? _contextCheckTimer;
 
   static Future<void> startListening() async {
-    final contextBox = await Hive.openBox('context');
-    final remindersBox = Hive.box<Reminder>('reminders');
-    final locationsBox = Hive.box<Location>('locations');
+    await stopListening();
+    try {
+      _activityStreamSubscription = activityRecognition
+          .activityStream(runForegroundService: true)
+          .listen(_onActivityUpdate);
+      _positionStreamSubscription =
+          Geolocator.getPositionStream().listen(_onPositionUpdate);
+      _contextCheckTimer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => _evaluateContext(),
+      );
+      log("Context listeners started.");
+    } catch (e) {
+      log("Error starting context listeners: $e");
+    }
+  }
 
-    // Start listening to activity recognition
-    _activitySubscription?.cancel();
-    final activityRecognition = ActivityRecognition();
-    _activitySubscription = activityRecognition.activityStream().listen((ActivityEvent event) {
-      log("New activity event: ${event.type.name}");
-      currentActivity = event.type.name;
-      contextBox.put('activity', currentActivity);
-    });
+  static Future<void> _onPositionUpdate(Position position) async {
+    final box = await Hive.openBox('context');
+    await box.put('lastLatitude', position.latitude);
+    await box.put('lastLongitude', position.longitude);
+    await box.close();
+  }
 
-    // Start listening to location updates
-    _positionSubscription?.cancel();
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen(
-      (position) async {
-        currentLocationText =
-            "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+  // Use the prefixed type for the event
+  static Future<void> _onActivityUpdate(ar.ActivityEvent activity) async {
+    final box = await Hive.openBox('context');
+    // The .name property will be the uppercase enum name (e.g., 'WALKING')
+    await box.put('lastActivity', activity.type.name);
+    await box.close();
+  }
 
-        const double radius = 120; // Radius in meters
-        if (remindersBox.isEmpty) return;
+  static Future<void> _evaluateContext() async {
+    final remindersBox = await Hive.openBox<Reminder>('reminders');
+    final locationsBox = await Hive.openBox<Location>('locations');
+    try {
+      final position = await Geolocator.getCurrentPosition();
+      const radius = 100.0; // 100 meters
 
-        for (var reminder in remindersBox.values) {
-          if (reminder.isLocationBased && reminder.active && !reminder.wasNotified) {
-            final location = locationsBox.get(reminder.locationKey);
+      for (var reminder in remindersBox.values) {
+        if (reminder.isLocationBased && reminder.active && !reminder.wasNotified) {
+          final location = locationsBox.get(reminder.locationKey);
+          if (location != null) {
+            final distance = Geolocator.distanceBetween(
+              position.latitude,
+              position.longitude,
+              location.latitude,
+              location.longitude,
+            );
 
-            if (location != null) {
-              final distance = Geolocator.distanceBetween(
-                position.latitude,
-                position.longitude,
-                location.latitude,
-                location.longitude,
+            if (distance <= radius && shouldDeliverReminderNow()) {
+              log("DELIVERING REMINDER (from ContextService): ${reminder.title}");
+              await NotificationService.showLocationReminder(
+                id: reminder.key as int,
+                title: reminder.title,
+                body: "You are at ${location.name}!",
               );
-
-              final bool inRange = distance <= radius;
-
-              if (inRange && shouldDeliverReminderNow()) {
-                log("DELIVERING REMINDER: ${reminder.title}");
-
-                await NotificationService.scheduleExactAlarm(
-                  id: reminder.key as int,
-                  title: reminder.title,
-                  body: "You are at ${location.name}!",
-                  when: DateTime.now().add(const Duration(seconds: 1)),
-                );
-
-                reminder.wasNotified = true;
-                await reminder.save();
-              }
+              reminder.wasNotified = true;
+              await reminder.save();
             }
           }
         }
-      },
-      onError: (error) {
-        log("Location stream error: $error");
-        currentLocationText = "Location error";
-      },
-    );
+      }
+    } finally {
+      await remindersBox.close();
+      await locationsBox.close();
+    }
   }
 
   static bool shouldDeliverReminderNow() {
-    return currentActivity == "STILL" || currentActivity == "WALKING";
+    return true;
   }
 
-  static Future<String> getCurrentActivity() async {
+  // Use the prefixed type for the return value
+  static Future<ar.ActivityType> getCurrentActivity() async {
     final box = await Hive.openBox('context');
-    return box.get('activity', defaultValue: 'UNKNOWN');
+    // The name should be uppercase, so 'UNKNOWN' is the correct default.
+    final activityName = box.get('lastActivity', defaultValue: 'UNKNOWN');
+    await box.close();
+    // Use the prefixed enum
+    return ar.ActivityType.values.firstWhere(
+      (e) => e.name == activityName,
+      // CORRECTED: Use the prefixed UNKNOWN, which is the correct fallback.
+      orElse: () => ar.ActivityType.unknown,
+    );
   }
 
-  static String getCurrentLocation() => currentLocationText;
-
-  static void dispose() {
-    _positionSubscription?.cancel();
-    _activitySubscription?.cancel();
+  static Future<void> stopListening() async {
+    await _activityStreamSubscription?.cancel();
+    await _positionStreamSubscription?.cancel();
+    _contextCheckTimer?.cancel();
+    log("Context listeners stopped.");
   }
 }

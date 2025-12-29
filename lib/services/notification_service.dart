@@ -25,7 +25,7 @@ void notificationTapBackground(
   final id = int.tryParse(notificationResponse.payload!);
   if (id == null) return;
 
-  // No need to manually cancel anymore, autoCancel: true handles it.
+  await NotificationService.cancel(id);
 
   final box = await Hive.openBox<Reminder>('reminders');
   final reminder = box.get(id);
@@ -34,26 +34,26 @@ void notificationTapBackground(
     switch (notificationResponse.actionId) {
       case 'ignore':
         final currentContext = await ContextService.getCurrentActivity();
-        reminder.ignored(currentContext);
-        log('Reminder #${reminder.key} ignored in context: $currentContext');
+        // The .name property provides the String representation of the enum (e.g., 'WALKING')
+        reminder.ignored(currentContext.name);
+        await reminder.save();
+        log('Reminder #${reminder.key} ignored in context: ${currentContext.name}');
         break;
       case 'snooze_10':
         log('Snoozing reminder #${reminder.key} for 10 minutes.');
-        // After snoozing, we need to re-schedule the alarm.
         await NotificationService.scheduleExactAlarm(
           id: id,
           title: reminder.title,
-          body: "Snoozed for 10 minutes", // General snooze message
+          body: "Snoozed for 10 minutes",
           when: DateTime.now().add(const Duration(minutes: 10)),
         );
-        // Reminder stays active, no need to save.
         break;
-      case 'task_done': // Explicit "Done" button
-      default: // Default tap action also means "Done"
+      case 'task_done':
+      default:
         log('Reminder #${reminder.key} marked as done.');
         reminder.wasNotified = true;
         reminder.active = false;
-        await reminder.save(); // Save the state change.
+        await reminder.save();
         break;
     }
   }
@@ -65,8 +65,8 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   static final AndroidNotificationChannel _channel = AndroidNotificationChannel(
-    'smart_reminder_alarms_v2', // V2 Channel ID
-    'Smart Reminder Alarms',      // V2 Channel Name
+    'smart_reminder_alarms_v2',
+    'Smart Reminder Alarms',
     description: 'Channel for important, insistent reminder alarms.',
     importance: Importance.max,
     playSound: true,
@@ -77,8 +77,8 @@ class NotificationService {
 
   static final AndroidNotificationChannel _locationAlarmChannel =
       AndroidNotificationChannel(
-    'location_alarms_v2', // V2 Channel ID
-    'Location Alarms',      // V2 Channel Name
+    'location_alarms_v2',
+    'Location Alarms',
     description: 'Channel for high-priority, insistent location-based alarms.',
     importance: Importance.max,
     playSound: true,
@@ -89,7 +89,6 @@ class NotificationService {
 
   static Future<void> init() async {
     tz_data.initializeTimeZones();
-
     const AndroidInitializationSettings androidInit =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
@@ -111,9 +110,7 @@ class NotificationService {
     required String body,
   }) async {
     await PermissionService.requestNotificationPermission();
-
     final payload = id.toString();
-
     final androidDetails = AndroidNotificationDetails(
       _locationAlarmChannel.id,
       _locationAlarmChannel.name,
@@ -121,20 +118,19 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       fullScreenIntent: true,
-      ongoing: false, // CORRECTED
-      autoCancel: true, // CORRECTED
+      ongoing: false,
+      autoCancel: true,
       sound: _locationAlarmChannel.sound,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      additionalFlags: Int32List.fromList([4]), // Insistent flag
+      additionalFlags: Int32List.fromList([4]),
       actions: <AndroidNotificationAction>[
         const AndroidNotificationAction('task_done', 'Task Done'),
         const AndroidNotificationAction('snooze_10', 'Snooze 10m'),
         const AndroidNotificationAction('ignore', 'Ignore'),
       ],
     );
-
     try {
       await _notifications.show(
         id,
@@ -157,9 +153,7 @@ class NotificationService {
   }) async {
     await PermissionService.requestNotificationPermission();
     await PermissionService.requestExactAlarmPermission();
-
     final payload = id.toString();
-
     final androidDetails = AndroidNotificationDetails(
       _channel.id,
       _channel.name,
@@ -167,27 +161,24 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       fullScreenIntent: false,
-      ongoing: false, // CORRECTED
-      autoCancel: true, // CORRECTED
+      ongoing: false,
+      autoCancel: true,
       sound: _channel.sound,
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-      additionalFlags: Int32List.fromList([4]), // Insistent flag
+      additionalFlags: Int32List.fromList([4]),
       actions: <AndroidNotificationAction>[
         const AndroidNotificationAction('task_done', 'Task Done'),
         const AndroidNotificationAction('ignore', 'Ignore'),
       ],
     );
-
     var tzWhen = tz.TZDateTime.from(when, tz.local);
     final tzNow = tz.TZDateTime.now(tz.local);
     if (tzWhen.isBefore(tzNow)) {
       tzWhen = tzNow.add(const Duration(seconds: 2));
     }
-
     log("SCHEDULING ALARM: id=$id, title='$title', when=$tzWhen");
-
     try {
       await _notifications.zonedSchedule(
         id,
