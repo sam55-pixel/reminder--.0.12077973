@@ -16,15 +16,6 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Add this block to enforce the same compileSdk for all subprojects
-subprojects {
-    afterEvaluate {
-        android {
-            compileSdkVersion(flutter.compileSdkVersion)
-        }
-    }
-}
-
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
